@@ -1,33 +1,54 @@
+import { Db, MongoClient } from 'mongodb';
 import express, { Express } from 'express';
-import cluster from 'cluster';
-import os from 'os';
+import { PresencesLogRepository, ViewerPresencesRepository, ViewerRepository } from './database/repositories';
+import { globalConfig } from './config';
+import { IEnvironment } from './interfaces';
+import { ViewershipPresencesGenerator } from './viewer-presence';
+import { constants } from './constants';
 
 export class Server {
 	public app: Express;
-	public numCPUs: number;
+	private environment: IEnvironment;
+	public connection: Db;
 
 	constructor() {
-		console.log(os);
-
-		this.numCPUs = os.cpus().length;
 		this.app = express();
+		this.config();
 	}
 
-	start(): void {
-		if (cluster.isPrimary) {
-			for (let index = 0; index < this.numCPUs; index++) {
-				cluster.fork();
-			}
+	config(): void {
+		this.environment = globalConfig();
+		this.app.set('port', this.environment.port);
+	}
 
-			cluster.on('exit', (worker) => {
-				console.log(`Worker ${worker.process.pid} died`);
-				console.log('Restarting worker...');
-				cluster.fork();
-			});
-		} else {
-			this.app.listen(8081, () => {
-				console.log('🚀 Invoices service ready at:', 8081);
-			});
+	async dbConnection(): Promise<Db> {
+		const client = new MongoClient(this.environment.db.host);
+		await client.connect();
+		return client.db(this.environment.db.name);
+	}
+
+	async logic(): Promise<void> {
+		/***** Create connection and declare repositories ******/
+		const connection = await this.dbConnection();
+
+		const viewershipCollection = new ViewerRepository(connection);
+		const logPresencesCollection = new PresencesLogRepository(connection);
+		const ViewerPresencesCollection = new ViewerPresencesRepository(connection);
+
+		try {
+			/***** Instance and run generate ******/
+			const generator = new ViewershipPresencesGenerator(
+				viewershipCollection,
+				logPresencesCollection,
+				ViewerPresencesCollection,
+			);
+			await generator.generate();
+		} catch (error) {
+			console.log(
+				`${constants.colors.redColor} An unexpected error has occurred!!${constants.colors.reset}`,
+			);
+
+			throw new Error(error);
 		}
 	}
 }
