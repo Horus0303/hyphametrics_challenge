@@ -1,0 +1,11 @@
+version: '3.9'
+services:
+  mongo:
+    container_name: mongo_database
+    build:
+      context: .
+    image: mongo:4.4.8
+    env_file:
+      - .env
+    ports:
+      - ${DB_PORT}:${DB_PORT}
